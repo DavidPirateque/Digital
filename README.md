@@ -455,7 +455,8 @@ Durante la ejecución, se procedió a inspeccionar el sistema utilizando las her
 *(Añade debajo de cada numeral la captura de pantalla de la terminal correspondiente)*
 
 ### 8.1 `ros2 node list`
-**[AÑADE TU CAPTURA DE PANTALLA AQUÍ]**
+<img width="945" height="505" alt="image" src="https://github.com/user-attachments/assets/201fecb2-5029-4918-ad11-a9218f3d3295" />
+
 > **Análisis:** Este comando lista los nodos activos. La captura demuestra que tanto `/turtlesim` como nuestro `/move_turtle_node` están operando simultáneamente en el middleware.
 
 ### 8.2 `ros2 topic list`
