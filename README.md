@@ -183,40 +183,108 @@ El simulador (`turtlesim_node`) opera como el actuador y sensor virtual, encarga
 
 Nuestra arquitectura utiliza **dos publicadores** (`/turtle1/cmd_vel` y `/turtle2/cmd_vel`) para el envío de instrucciones de velocidad lineal y angular. A su vez, requiere **dos suscriptores** (`/turtle1/pose` y `/turtle2/pose`) para realimentar el sistema con la posición exacta y lograr el control de lazo cerrado necesario para las figuras y el seguimiento.
 
-## 7. Implementación y Desarrollo
+## 7. implementación
 
 La solución integral reside en el script `move_turtle.py`, cumpliendo con la restricción del laboratorio de gestionar todo el movimiento exclusivamente desde nodos propios, sin recurrir a paquetes externos como `turtle_teleop_key`.
 
-### 7.1 Creación del Nodo, Suscriptores y Publicadores
-El programa inicializa heredando de la clase `Node` de `rclpy`. En su constructor, se instancian los tópicos de comunicación.
+### 7.1 Creacion de nodo, suscrptores y publicadores.
+
+El programa se inicializa heredando de la clase `Node` de la biblioteca `rclpy`. En su constructor, se instancian los elementos básicos para el funcionamiento del nodo.
+
 ```python
+
 class MoveTurtle(Node):
+
     def __init__(self):
         super().__init__('move_turtle_node')
+
 ```
-Se configuran los publicadores para enviar objetos de tipo `Twist` y los suscriptores para recibir objetos de tipo `Pose`, tanto para la tortuga principal como para el seguidor.
+
+Posteriormente, se configuran los publicadores para enviar objetos de tipo `Twist` (comandos de velocidad) y los suscriptores para recibir objetos de tipo `Pose` (posición actual). 
+
 ```python
-# Líder
-self.cmd_vel_pub = self.create_publisher(Twist, '/turtle1/cmd_vel', 10)
-self.pose_sub = self.create_subscription(Pose, '/turtle1/pose', self.pose_callback, 10)
 
-# Seguidor
-self.cmd_vel2_pub = self.create_publisher(Twist, '/turtle2/cmd_vel', 10)
-self.pose2_sub = self.create_subscription(Pose, '/turtle2/pose', self.pose2_callback, 10)
+self.cmd_vel_pub = self.create_publisher(
+    Twist,
+    '/turtle1/cmd_vel',
+    10
+)
+
+self.pose_sub = self.create_subscription(
+    Pose,
+    '/turtle1/pose',
+    self.pose_callback,
+    10
+)
+
 ```
 
-### 7.2 Creación de Clientes de Servicios
-Para la ejecución de tareas síncronas que modifican el entorno, se implementaron clientes apuntando a los servicios nativos de `turtlesim`.
+Adicionalmente, se instancian un publicador y un suscriptor exclusivos para gestionar la comunicación del sistema líder-seguidor.
+
 ```python
-self.teleport_client = self.create_client(TeleportAbsolute, '/turtle1/teleport_absolute')
-self.set_pen_client = self.create_client(SetPen, '/turtle1/set_pen')
-self.spawn_client = self.create_client(Spawn, '/spawn')
-self.kill_client = self.create_client(Kill, '/kill')
-self.clear_client = self.create_client(Empty, '/clear')
+
+self.cmd_vel2_pub = self.create_publisher(
+    Twist,
+    '/turtle2/cmd_vel',
+    10
+)
+
+self.pose2_sub = self.create_subscription(
+    Pose,
+    '/turtle2/pose',
+    self.pose2_callback,
+    10
+)
+
+```
+### 7.2 Creación de clientes de servicios.
+
+Para la ejecución de tareas síncronas que modifican el entorno, se implementaron clientes apuntando a los servicios nativos provistos por el simulador `turtlesim`.
+
+```python
+
+self.teleport_client = self.create_client(
+    TeleportAbsolute,
+    '/turtle1/teleport_absolute'
+)
+
+self.set_pen_client = self.create_client(
+    SetPen,
+    '/turtle1/set_pen'
+)
+
+self.spawn_client = self.create_client(
+    Spawn,
+    '/spawn'
+)
+
+self.kill_client = self.create_client(
+    Kill,
+    '/kill'
+)
+
 ```
 
-### 7.3 Control Manual Fluido
-Para evitar bloqueos y lograr un movimiento simultáneo y natural (acelerar y girar al mismo tiempo), se programó una lectura directa del teclado mediante la librería `sys` y `select`. Se implementaron *Watchdog Timers* (filtros temporales) que almacenan de forma independiente la velocidad lineal y angular, manteniéndolas vivas mientras el usuario presiona las teclas y aplicando un frenado suave al detectar inactividad.
+### 7.3 Control manual.
+
+Usando la función `get_key()`, se realiza una lectura directa y no bloqueante del teclado mediante las librerías `sys` y `select`.
+
+```python
+
+if key == KEY_UP:
+    self.move_forward(now)
+
+elif key == KEY_DOWN:
+    self.move_backward(now)
+
+elif key == KEY_LEFT:
+    self.turn_left(now)
+
+elif key == KEY_RIGHT:
+    self.turn_right(now)
+
+```
+Para lograr un movimiento simultáneo y natural (acelerar y girar al mismo tiempo), se implementaron filtros temporales (*Watchdog Timers*). Estos almacenan de forma independiente la velocidad lineal y angular, manteniéndolas activas mientras se presionan las teclas y publicando los mensajes `Twist` sobre el tópico correspondiente. Al detectar inactividad, se aplica un frenado suave.
 
 ```python
 def move_forward(self, now):
@@ -224,36 +292,88 @@ def move_forward(self, now):
     self.last_v_time = now
     if self.current_w != 0.0: 
         self.last_w_time = now # Cross-Refresh para prevenir detenciones bruscas
-```
 
-### 7.4 Figuras Automáticas
-Para el trazado de figuras, se implementó control cinemático de lazo cerrado (leyendo constantemente la odometría). El triángulo, por ejemplo, itera tres movimientos rectos y giros calculados.
+```
+### 7.4 Figuras automaticas.
+
+Para el trazado de figuras, se implementó control cinemático de lazo cerrado mediante la lectura constante de la odometría, lo que garantiza vértices precisos. 
+
+Para el triángulo, se itera un ciclo de tres movimientos rectos y giros calculados:
+
 ```python
+
     def draw_triangle(self, side_length=SHAPE_SIDE_LENGTH):
         self.get_logger().info('Dibujando triangulo...')
         for lado in range(3):
             if not self.move_by_distance(side_length): return
             if not self.turn_by_angle(2 * math.pi / 3): return
         self.get_logger().info('Triangulo completado.')
+
 ```
+
+Obteniendo como resultado:
+
 <br>
+
 <div align="center">
   <img src="Images/triangulo.png" alt="triag" style="border-radius: 5px; width: 350px;">
   <br>
   <b>Figura 3. Figura de triángulo.</b>
 </div>
+
+<br>
+
+Para el cuadrado, el procedimiento es análogo, iterando el movimiento 4 veces con giros ortogonales:
+
+```python
+
+    def draw_square(self, side_length=SHAPE_SIDE_LENGTH):
+        self.get_logger().info('Dibujando cuadrado...')
+        for lado in range(4):
+            if not self.move_by_distance(side_length): return
+            if not self.turn_by_angle(math.pi / 2): return
+        self.get_logger().info('Cuadrado completado.')
+
+```
+Obteniendo como resultado:
+
 <br>
 
 <div align="center">
   <img src="Images/rectangulo.png" alt="rec" style="border-radius: 5px; width: 350px;">
   <br>
-  <b>Figura 4. Figura de cuadrado.</b>
+  <b>Figura 4. Figura de rectángulo.</b>
 </div>
+
 <br>
 
-### 7.5 Dibujo de Letras Tipográficas
-Para el diseño de las iniciales (D, S, P, F, C), se implementó la función `draw_arc` con reducción proporcional de velocidad (`SLOWDOWN_FACTOR`) al acercarse al ángulo objetivo. Esto evita el "overshoot" (inercia) del simulador, garantizando que las curvas tipográficas no se deformen ni se tuerzan.
+
+### 7.5 Dibujo de letras.
+
+Para el diseño de las iniciales (D, S, P, F, C), se implementó una rutina algorítmica independiente para cada una. Se desarrolló la función `draw_arc` equipada con reducción proporcional de velocidad (`SLOWDOWN_FACTOR`) al acercarse al ángulo objetivo. Esto evita la inercia excesiva ("overshoot") del simulador, garantizando que las curvas tipográficas se tracen con precisión.
+
 ```python 
+
+    def draw_D(self):
+        self.get_logger().info('Dibujando letra D...')
+        self._set_pen(False) 
+        if not self.turn_to_angle(math.pi / 2): return       
+        if not self.move_by_distance(2.0): return            
+        if not self.turn_to_angle(0.0): return               
+        if not self.draw_arc(-math.pi, radius=1.0): return   
+        self._set_pen(True)  
+        self.turn_to_angle(0.0)
+
+    def draw_S(self):
+        self.get_logger().info('Dibujando letra S...')
+        self._set_pen(False) 
+        if not self.turn_to_angle(math.pi / 2): return               
+        if not self.draw_arc(1.5 * math.pi, radius=0.5): return    
+        if not self.turn_to_angle(0.0): return           
+        if not self.draw_arc(-1.5 * math.pi, radius=0.5): return   
+        self._set_pen(True)  
+        self.turn_to_angle(0.0) 
+
     def draw_P(self):
         self.get_logger().info('Dibujando letra P...')
         self._set_pen(False) 
@@ -263,40 +383,91 @@ Para el diseño de las iniciales (D, S, P, F, C), se implementó la función `dr
         if not self.draw_arc(-math.pi, radius=0.65): return   
         self._set_pen(True)  
         self.turn_to_angle(0.0)
+
+    def draw_F(self):
+        self.get_logger().info('Dibujando letra F...')
+        self._set_pen(False) 
+        if not self.turn_to_angle(math.pi / 2): return       
+        if not self.move_by_distance(2.0): return            
+        if not self.turn_to_angle(0.0): return               
+        if not self.move_by_distance(1.0): return            
+        
+        self._set_pen(True)  
+        if not self.turn_to_angle(math.pi): return           
+        if not self.move_by_distance(1.0): return            
+        if not self.turn_to_angle(-math.pi / 2): return      
+        if not self.move_by_distance(1.0): return            
+        if not self.turn_to_angle(0.0): return               
+        
+        self._set_pen(False) 
+        if not self.move_by_distance(0.8): return            
+        self._set_pen(True)  
+        self.turn_to_angle(0.0)
+
+    def draw_C(self):
+        self.get_logger().info('Dibujando letra C...')
+        self._set_pen(True)  
+        if not self.turn_to_angle(math.pi / 2): return       
+        if not self.move_by_distance(2.0): return
+        if not self.turn_to_angle(0.0): return               
+        if not self.move_by_distance(1.0): return
+        if not self.turn_to_angle(math.pi): return           
+        
+        self._set_pen(False) 
+        if not self.draw_arc(math.pi, radius=1.0): return    
+        self._set_pen(True)  
+        self.turn_to_angle(0.0)
 ```
-Presionando la tecla `V`, se dispara una secuencia automática que posiciona y dibuja todas las letras en un arreglo de cuadrícula.
+
+Al presionar la tecla `V`, se dispara una secuencia automática que posiciona el actuador y dibuja todas las letras en un arreglo de cuadrícula, manejando el levantamiento automático del lápiz para evitar trazos superpuestos.
 
 <br>
+
 <div align="center">
   <img src="Images/letras.png" alt="letr" style="border-radius: 5px; width: 350px;">
   <br>
-  <b>Figura 5. Secuencia de dibujo de letras.</b>
+  <b>Figura 5. Dibujo de letras.</b>
 </div>
+
 <br>
 
-### 7.6 Sistema Líder-Seguidor
-El seguimiento se resuelve mediante un **Controlador Proporcional (P)**. Un temporizador calcula la diferencia matemática entre las coordenadas de `turtle1` y `turtle2` a una frecuencia de 20Hz.
+### 7.6 Sistema líder-seguidor.
+
+El seguimiento se resuelve mediante la implementación de un controlador proporcional. Un temporizador calcula la diferencia matemática entre las coordenadas de ambas tortugas a una frecuencia de 20Hz.
 
 ```python
 dx = self.current_pose.x - self.pose2.x
 dy = self.current_pose.y - self.pose2.y
+
 distance = math.hypot(dx, dy)
+
 target_theta = math.atan2(dy, dx)
 ```
-Se aplica la ganancia proporcional para generar las velocidades correctoras:
+Se aplica la ganancia proporcional para generar las velocidades correctoras en función del error espacial y angular.
+
 ```python
 msg.linear.x = 1.5 * distance
+
 msg.angular.z = 6.0 * error_theta
-self.cmd_vel2_pub.publish(msg)
+
 ```
-Al presionar la tecla `2`, la segunda tortuga aparece en el mapa y comienza a cazar la posición de la principal.
+Finalmente, la velocidad resultante es publicada y enviada al tópico correspondiente.
+
+```python
+self.cmd_vel2_pub.publish(msg)
+
+```
+Al presionar la tecla de activación del seguidor (`2`), se instancía una segunda tortuga mediante el servicio respectivo. Esta comienza a seguir automáticamente la trayectoria del líder. Su recorrido se representa con un trazo de color ligeramente distinto en el simulador.
+
 
 <br>
+
 <div align="center">
   <img src="Images/seguidor.png" alt="seg" style="border-radius: 5px; width: 350px;">
   <br>
-  <b>Figura 6. Sistema Líder-Seguidor en acción.</b>
+  <b>Figura 6. Sistema Líder-seguidor.</b>
 </div>
+
 <br>
 
 ## 8. Verificación de la Arquitectura ROS 2
